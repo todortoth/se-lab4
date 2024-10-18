@@ -1,0 +1,76 @@
+---
+name: Measure coverage
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+
+env:
+  COVERAGE_THRESHOLD: 0.8
+
+permissions:
+  pull-requests: write
+
+jobs:
+  test:
+    name: Coverage with JaCoCo
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: maven
+
+      - name: Evaluate coverage
+        run: mvn -B verify
+
+      - name: Create filtered JaCoCo CSV that contains only GT4500 results
+        run: >
+          > jacoco-gt4500.csv awk
+          'NR==1{print;next}/GT4500/{print}'
+          target/site/jacoco/jacoco.csv
+
+      - name: Generate JaCoCo badges
+        id: jacoco
+        uses: cicirello/jacoco-badge-generator@v2
+        with:
+          jacoco-csv-file: jacoco-gt4500.csv
+          generate-coverage-badge: false
+          generate-branches-badge: false
+          workflow-summary-heading: JaCoCo Test Coverage Summary (GT4500)
+
+      - name: Log coverage metrics
+        run: |
+          echo "GT4500 instruction coverage = ${{ steps.jacoco.outputs.coverage }}"
+          echo "GT4500 branch coverage = ${{ steps.jacoco.outputs.branches }}"
+
+      - name: Add PR comment with coverage metrics
+        uses: mshick/add-pr-comment@v2
+        with:
+          message: |
+            ### JaCoCo Coverage Report (GT4500)
+
+            | Coverage Metric | Value | Threshold (Minimum) | |
+            | --- | --- | --- | --- |
+            | 👉 Instruction Coverage | ${{ steps.jacoco.outputs.coverage }} | ${{ env.COVERAGE_THRESHOLD }} | ${{ steps.jacoco.outputs.coverage < env.COVERAGE_THRESHOLD && '❌' || '✅' }} |
+            | 🌳 Decision/Branch Coverage | ${{ steps.jacoco.outputs.branches }} | ${{ env.COVERAGE_THRESHOLD }} | ${{ steps.jacoco.outputs.branches < env.COVERAGE_THRESHOLD && '❌' || '✅' }} |
+          allow-repeats: true
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-report
+          path: target/site/jacoco/
+
+      - name: Fail job unless requirements are met
+        if: ${{ steps.jacoco.outputs.coverage < env.COVERAGE_THRESHOLD || steps.jacoco.outputs.branches < env.COVERAGE_THRESHOLD }}
+        uses: actions/github-script@v7
+        with:
+          script: core.setFailed('Coverage metrics do not meet requirements')
+
